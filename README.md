@@ -645,6 +645,7 @@ Main commands:
 
 ```text
 drugclaw start
+drugclaw acp
 drugclaw setup
 drugclaw doctor
 drugclaw gateway
@@ -664,6 +665,16 @@ drugclaw hooks list
 drugclaw gateway status
 drugclaw skill search docking
 ```
+
+### ACP stdio mode (optional)
+
+DrugClaw can run as an Agent Client Protocol (ACP) server over stdio:
+
+```sh
+drugclaw acp
+```
+
+Use this mode when another local tool needs a sessioned DrugClaw runtime over stdio instead of Telegram/Discord/Web ingress.
 
 ## Shell Scripts
 
@@ -732,6 +743,8 @@ Start here for deeper docs:
 - [docs/generated/tools.md](docs/generated/tools.md)
 - [docs/generated/config-defaults.md](docs/generated/config-defaults.md)
 - [docs/generated/provider-matrix.md](docs/generated/provider-matrix.md)
+- [docs/a2a.md](docs/a2a.md)
+- [docs/operations/acp-stdio.md](docs/operations/acp-stdio.md)
 - [docs/operations/runbook.md](docs/operations/runbook.md)
 - [docs/operations/science-runtime.md](docs/operations/science-runtime.md)
 - [docs/releases/pr-release-checklist.md](docs/releases/pr-release-checklist.md)
@@ -740,3 +753,7 @@ Start here for deeper docs:
 ## License
 
 Apache License 2.0. See [LICENSE](LICENSE).
+
+## Star History
+
+[![Star History Chart](https://api.star-history.com/image?repos=DrugClaw/DrugClaw&type=date&legend=top-left)](https://www.star-history.com/?repos=DrugClaw%2FDrugClaw&type=date&legend=top-left)

@@ -42,6 +42,7 @@ On first start, schema migrations are applied automatically.
 5. `GET /api/config/self_check` (no unaccepted `high` warnings)
 6. In any chat, start a long-running request and send `/stop`; verify the in-flight run is aborted.
 7. Verify `/reset` still clears chat context (session + chat history) as before.
+8. Verify `/reset memory` clears chat memory (chat AGENTS.md + structured memories) while keeping conversation and tasks.
 
 ## Recent PR References
 

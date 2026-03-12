@@ -606,44 +606,56 @@ fn process_openai_stream_event(
         return;
     };
 
-    if let Some(piece) = delta.get("content").and_then(|t| t.as_str()) {
+    if let Some(piece) = delta.get("content").and_then(extract_text_from_oai_value) {
         if !piece.is_empty() {
-            text.push_str(piece);
+            text.push_str(&piece);
             if let Some(tx) = text_tx {
-                let _ = tx.send(piece.to_string());
+                let _ = tx.send(piece);
             }
         }
     }
 
     if let Some(piece) = delta
         .get("thought")
-        .and_then(|t| t.as_str())
-        .or_else(|| delta.get("thinking").and_then(|t| t.as_str()))
+        .and_then(extract_text_from_oai_value)
+        .or_else(|| delta.get("thinking").and_then(extract_text_from_oai_value))
     {
         if !piece.is_empty() {
             if reasoning_text.is_empty() {
                 debug!("AI started generating thinking/thought");
             }
-            reasoning_text.push_str(piece);
+            reasoning_text.push_str(&piece);
         }
     }
 
-    if let Some(piece) = delta.get("reasoning_content").and_then(|t| t.as_str()) {
+    if let Some(piece) = delta
+        .get("reasoning_content")
+        .and_then(extract_text_from_oai_value)
+    {
         if !piece.is_empty() {
             if reasoning_text.is_empty() {
                 debug!("AI started generating reasoning_content");
             }
-            reasoning_text.push_str(piece);
+            reasoning_text.push_str(&piece);
         }
     }
 
     if let Some(tc_arr) = delta.get("tool_calls").and_then(|v| v.as_array()) {
-        for (arr_pos, tc) in tc_arr.iter().enumerate() {
-            let index = tc
-                .get("index")
-                .and_then(|i| i.as_u64())
-                .and_then(|i| usize::try_from(i).ok())
-                .unwrap_or(arr_pos);
+        for tc in tc_arr {
+            let index = if let Some(i) = tc.get("index").and_then(|i| i.as_u64()) {
+                usize::try_from(i).ok()
+            } else if let Some(id) = tc.get("id").and_then(|v| v.as_str()) {
+                tool_calls
+                    .iter()
+                    .find(|(_, entry)| entry.id == id)
+                    .map(|(idx, _)| *idx)
+            } else {
+                None
+            };
+
+            let index =
+                index.unwrap_or_else(|| tool_calls.keys().last().map(|last| last + 1).unwrap_or(0));
+
             let entry = tool_calls.entry(index).or_default();
             if let Some(id) = tc.get("id").and_then(|v| v.as_str()) {
                 entry.id = id.to_string();
@@ -661,6 +673,14 @@ fn process_openai_stream_event(
                 if let Some(sig) = function.get("thought_signature").and_then(|v| v.as_str()) {
                     entry.thought_signature = Some(sig.to_string());
                 }
+            }
+            if let Some(sig) = tc
+                .get("extra_content")
+                .and_then(|e| e.get("google"))
+                .and_then(|g| g.get("thought_signature"))
+                .and_then(|s| s.as_str())
+            {
+                entry.thought_signature = Some(sig.to_string());
             }
         }
     }
@@ -732,7 +752,10 @@ fn build_stream_response(
     }
 
     let mut normalized_stop_reason = normalize_stop_reason(stop_reason);
-    if normalized_stop_reason.as_deref() == Some("tool_use") && !has_tool_use_block(&content) {
+    if !tool_blocks.is_empty() {
+        normalized_stop_reason = Some("tool_use".to_string());
+    } else if normalized_stop_reason.as_deref() == Some("tool_use") && !has_tool_use_block(&content)
+    {
         warn!("Downgrading stop_reason=tool_use to end_turn because no tool_calls were parsed");
         normalized_stop_reason = Some("end_turn".into());
     }
@@ -1131,6 +1154,41 @@ where
     Ok(Option::<Vec<OaiChoice>>::deserialize(deserializer)?.unwrap_or_default())
 }
 
+fn deserialize_optional_oai_text<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = Option::<serde_json::Value>::deserialize(deserializer)?;
+    Ok(value.and_then(|v| extract_text_from_oai_value(&v)))
+}
+
+fn extract_text_from_oai_value(value: &serde_json::Value) -> Option<String> {
+    match value {
+        serde_json::Value::Null => None,
+        serde_json::Value::String(text) => Some(text.clone()),
+        serde_json::Value::Array(items) => {
+            let combined = items
+                .iter()
+                .filter_map(extract_text_from_oai_value)
+                .collect::<Vec<_>>()
+                .join("");
+            if combined.is_empty() {
+                None
+            } else {
+                Some(combined)
+            }
+        }
+        serde_json::Value::Object(map) => map
+            .get("text")
+            .and_then(|v| v.as_str())
+            .map(|v| v.to_string())
+            .or_else(|| map.get("content").and_then(extract_text_from_oai_value))
+            .or_else(|| map.get("parts").and_then(extract_text_from_oai_value))
+            .or_else(|| map.get("value").and_then(extract_text_from_oai_value)),
+        _ => None,
+    }
+}
+
 #[derive(Debug, Deserialize)]
 struct OaiChoice {
     message: OaiMessage,
@@ -1139,7 +1197,9 @@ struct OaiChoice {
 
 #[derive(Debug, Deserialize)]
 struct OaiMessage {
+    #[serde(default, deserialize_with = "deserialize_optional_oai_text")]
     content: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_optional_oai_text")]
     reasoning_content: Option<String>,
     tool_calls: Option<Vec<OaiToolCall>>,
 }
@@ -1148,6 +1208,8 @@ struct OaiMessage {
 struct OaiToolCall {
     id: String,
     function: OaiFunction,
+    #[serde(default)]
+    extra_content: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1619,12 +1681,12 @@ impl LlmProvider for OpenAiProvider {
                 text: combined_text,
             });
         }
-        for (_index, tool) in tool_calls {
+        for tool in tool_calls.values() {
             content.push(ResponseContentBlock::ToolUse {
-                id: tool.id,
-                name: tool.name,
+                id: tool.id.clone(),
+                name: tool.name.clone(),
                 input: parse_tool_input(&tool.input_json),
-                thought_signature: tool.thought_signature,
+                thought_signature: tool.thought_signature.clone(),
             });
         }
         if content.is_empty() {
@@ -1633,9 +1695,14 @@ impl LlmProvider for OpenAiProvider {
             });
         }
 
+        let mut normalized_stop_reason = normalize_stop_reason(stop_reason);
+        if !tool_calls.is_empty() {
+            normalized_stop_reason = Some("tool_use".to_string());
+        }
+
         Ok(MessagesResponse {
             content,
-            stop_reason: normalize_stop_reason(stop_reason),
+            stop_reason: normalized_stop_reason,
             usage,
         })
     }
@@ -1865,18 +1932,22 @@ fn translate_messages_to_oai_with_reasoning(
                                 input,
                                 thought_signature,
                             } => {
-                                let mut function_obj = json!({
-                                    "name": name,
-                                    "arguments": serde_json::to_string(input).unwrap_or_default()
-                                });
-                                if let Some(sig) = thought_signature {
-                                    function_obj["thought_signature"] = json!(sig);
-                                }
-                                Some(json!({
+                                let mut tc = json!({
                                     "id": id,
                                     "type": "function",
-                                    "function": function_obj
-                                }))
+                                    "function": {
+                                        "name": name,
+                                        "arguments": serde_json::to_string(input).unwrap_or_default()
+                                    }
+                                });
+                                if let Some(sig) = thought_signature {
+                                    tc["extra_content"] = json!({
+                                        "google": {
+                                            "thought_signature": sig
+                                        }
+                                    });
+                                }
+                                Some(tc)
                             }
                             _ => None,
                         })
@@ -2245,11 +2316,17 @@ fn translate_oai_response(oai: OaiResponse) -> MessagesResponse {
         for tc in tool_calls {
             let input: serde_json::Value =
                 serde_json::from_str(&tc.function.arguments).unwrap_or_default();
+            let thought_signature = tc
+                .extra_content
+                .and_then(|e| e.get("google").cloned())
+                .and_then(|g| g.get("thought_signature").cloned())
+                .and_then(|s| s.as_str().map(|s| s.to_string()))
+                .or(tc.function.thought_signature);
             content.push(ResponseContentBlock::ToolUse {
                 id: tc.id,
                 name: tc.function.name,
                 input,
-                thought_signature: tc.function.thought_signature,
+                thought_signature,
             });
         }
     }
@@ -2265,7 +2342,9 @@ fn translate_oai_response(oai: OaiResponse) -> MessagesResponse {
         Some("length") => Some("max_tokens".into()),
         _ => Some("end_turn".into()),
     };
-    if stop_reason.as_deref() == Some("tool_use") && !has_tool_use_block(&content) {
+    if has_tool_use_block(&content) {
+        stop_reason = Some("tool_use".into());
+    } else if stop_reason.as_deref() == Some("tool_use") && !has_tool_use_block(&content) {
         warn!("Downgrading stop_reason=tool_use to end_turn because response had no tool_calls");
         stop_reason = Some("end_turn".into());
     }
@@ -2373,7 +2452,10 @@ mod tests {
         }];
         let out = translate_messages_to_oai("", &msgs);
         let tc = out[0]["tool_calls"].as_array().unwrap();
-        assert_eq!(tc[0]["function"]["thought_signature"], "sig_abc");
+        assert_eq!(
+            tc[0]["extra_content"]["google"]["thought_signature"],
+            "sig_abc"
+        );
     }
 
     #[test]
@@ -2648,6 +2730,7 @@ mod tests {
                             arguments: r#"{"command":"ls"}"#.into(),
                             thought_signature: None,
                         },
+                        extra_content: None,
                     }]),
                 },
                 finish_reason: Some("tool_calls".into()),
@@ -2692,6 +2775,19 @@ mod tests {
             .content
             .iter()
             .any(|b| matches!(b, ResponseContentBlock::ToolUse { .. })));
+    }
+
+    #[test]
+    fn test_translate_oai_response_tool_calls_legacy_function_thought_signature() {
+        let raw = r#"{"choices":[{"message":{"content":null,"reasoning_content":null,"tool_calls":[{"id":"call_1","function":{"name":"bash","arguments":"{\"command\":\"ls\"}","thought_signature":"sig_legacy"}}]},"finish_reason":"tool_calls"}],"usage":null}"#;
+        let oai: OaiResponse = serde_json::from_str(raw).unwrap();
+        let resp = translate_oai_response(oai);
+        match &resp.content[0] {
+            ResponseContentBlock::ToolUse {
+                thought_signature, ..
+            } => assert_eq!(thought_signature.as_deref(), Some("sig_legacy")),
+            _ => panic!("Expected ToolUse"),
+        }
     }
 
     #[test]
@@ -2746,6 +2842,7 @@ mod tests {
                             arguments: r#"{"path":"/tmp/x"}"#.into(),
                             thought_signature: None,
                         },
+                        extra_content: None,
                     }]),
                 },
                 finish_reason: Some("tool_calls".into()),
@@ -2778,6 +2875,7 @@ mod tests {
                             arguments: r#"{"command":"ls"}"#.into(),
                             thought_signature: None,
                         },
+                        extra_content: None,
                     }]),
                 },
                 finish_reason: Some("tool_calls".into()),
@@ -2795,6 +2893,19 @@ mod tests {
         match &resp.content[1] {
             ResponseContentBlock::ToolUse { name, .. } => assert_eq!(name, "bash"),
             _ => panic!("Expected ToolUse"),
+        }
+    }
+
+    #[test]
+    fn test_translate_oai_response_accepts_structured_content_arrays() {
+        let raw = r#"{"choices":[{"message":{"content":[{"type":"text","text":"Hello "},{"type":"text","text":"Gemini"}],"reasoning_content":[{"type":"text","text":"plan "},{"type":"text","text":"steps"}],"tool_calls":null},"finish_reason":"stop"}],"usage":null}"#;
+        let oai: OaiResponse = serde_json::from_str(raw).unwrap();
+        let resp = translate_oai_response(oai);
+        match &resp.content[0] {
+            ResponseContentBlock::Text { text } => {
+                assert_eq!(text, "<thought>\nplan steps\n</thought>\n\nHello Gemini")
+            }
+            _ => panic!("Expected Text"),
         }
     }
 
@@ -2850,6 +2961,32 @@ mod tests {
             .content
             .iter()
             .any(|b| matches!(b, ResponseContentBlock::ToolUse { .. })));
+    }
+
+    #[test]
+    fn test_process_openai_stream_event_accepts_structured_delta_content() {
+        let data = r#"{"choices":[{"delta":{"content":[{"type":"text","text":"Hello "},{"type":"text","text":"Gemini"}],"reasoning_content":[{"type":"text","text":"plan"},{"type":"text","text":" more"}]}}],"usage":null}"#;
+        let mut text = String::new();
+        let mut reasoning_text = String::new();
+        let mut stop_reason = None;
+        let mut usage = None;
+        let mut tool_calls = std::collections::BTreeMap::new();
+
+        process_openai_stream_event(
+            data,
+            None,
+            &mut text,
+            &mut reasoning_text,
+            &mut stop_reason,
+            &mut usage,
+            &mut tool_calls,
+        );
+
+        assert_eq!(text, "Hello Gemini");
+        assert_eq!(reasoning_text, "plan more");
+        assert_eq!(stop_reason, None);
+        assert!(usage.is_none());
+        assert!(tool_calls.is_empty());
     }
 
     #[test]

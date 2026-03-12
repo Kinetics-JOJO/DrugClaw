@@ -70,6 +70,11 @@ resolve_targets() {
     command -v "$BIN_NAME"
   fi
 
+  if [ -n "${HOMEBREW_PREFIX:-}" ]; then
+    printf '%s\n' "${HOMEBREW_PREFIX%/}/bin/$BIN_NAME"
+  fi
+
+  printf '%s\n' "/opt/homebrew/bin/$BIN_NAME"
   printf '%s\n' "/usr/local/bin/$BIN_NAME"
   printf '%s\n' "$HOME/.local/bin/$BIN_NAME"
 }

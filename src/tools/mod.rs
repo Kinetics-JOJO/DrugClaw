@@ -1,3 +1,4 @@
+pub mod a2a;
 pub mod activate_skill;
 pub mod bash;
 pub mod browser;
@@ -171,6 +172,8 @@ impl ToolRegistry {
                 },
                 config.bot_username_overrides(),
             )),
+            Box::new(a2a::A2AListPeersTool::new(config)),
+            Box::new(a2a::A2ASendTool::new(config)),
             Box::new(schedule::ScheduleTaskTool::new(
                 channel_registry.clone(),
                 db.clone(),
@@ -635,6 +638,7 @@ mod tests {
     fn test_tool_risk_levels() {
         assert_eq!(tool_risk("bash"), ToolRisk::High);
         assert_eq!(tool_risk("write_file"), ToolRisk::Medium);
+        assert_eq!(tool_risk("a2a_send"), ToolRisk::Medium);
         assert_eq!(tool_risk("pause_scheduled_task"), ToolRisk::Medium);
         assert_eq!(tool_risk("sync_skills"), ToolRisk::Medium);
         assert_eq!(tool_risk("read_file"), ToolRisk::Low);

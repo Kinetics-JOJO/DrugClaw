@@ -2104,6 +2104,35 @@ impl Database {
         Ok(affected > 0)
     }
 
+    /// Clear memory state for a chat without deleting chat/session/message history.
+    /// This removes structured memories and reflector bookkeeping for the chat.
+    pub fn clear_chat_memory(&self, chat_id: i64) -> Result<bool, DrugClawError> {
+        let conn = self.lock_conn();
+        let tx = conn.unchecked_transaction()?;
+        let mut affected = 0usize;
+        affected += tx.execute(
+            "DELETE FROM memory_reflector_state WHERE chat_id = ?1",
+            params![chat_id],
+        )?;
+        affected += tx.execute(
+            "DELETE FROM memory_reflector_runs WHERE chat_id = ?1",
+            params![chat_id],
+        )?;
+        affected += tx.execute(
+            "DELETE FROM memory_injection_logs WHERE chat_id = ?1",
+            params![chat_id],
+        )?;
+        affected += tx.execute(
+            "DELETE FROM memory_supersede_edges
+             WHERE from_memory_id IN (SELECT id FROM memories WHERE chat_id = ?1)
+                OR to_memory_id IN (SELECT id FROM memories WHERE chat_id = ?1)",
+            params![chat_id],
+        )?;
+        affected += tx.execute("DELETE FROM memories WHERE chat_id = ?1", params![chat_id])?;
+        tx.commit()?;
+        Ok(affected > 0)
+    }
+
     pub fn delete_chat_data(&self, chat_id: i64) -> Result<bool, DrugClawError> {
         let conn = self.lock_conn();
         let tx = conn.unchecked_transaction()?;
@@ -5363,6 +5392,54 @@ mod tests {
             1
         );
         assert!(!db.search_memories(100, "Rust", 10).unwrap().is_empty());
+        assert!(db.get_chat_type(100).unwrap().is_some());
+
+        cleanup(&dir);
+    }
+
+    #[test]
+    fn test_clear_chat_memory_removes_memories_but_keeps_conversation_and_tasks() {
+        let (db, dir) = test_db();
+        db.upsert_chat(100, Some("chat-100"), "private").unwrap();
+        db.save_session(100, r#"[{"role":"user","content":"hi"}]"#)
+            .unwrap();
+        db.store_message(&StoredMessage {
+            id: "m1".into(),
+            chat_id: 100,
+            sender_name: "alice".into(),
+            content: "hello".into(),
+            is_from_bot: false,
+            timestamp: "2024-01-01T00:00:01Z".into(),
+        })
+        .unwrap();
+        db.insert_memory(Some(100), "User likes Rust", "PROFILE")
+            .unwrap();
+        let task_id = db
+            .create_scheduled_task(
+                100,
+                "daily summary",
+                "cron",
+                "0 0 8 * * *",
+                "2099-01-01T08:00:00Z",
+            )
+            .unwrap();
+        db.log_task_run(
+            task_id,
+            100,
+            "2024-01-01T08:00:00Z",
+            "2024-01-01T08:00:01Z",
+            1000,
+            true,
+            Some("ok"),
+        )
+        .unwrap();
+
+        assert!(db.clear_chat_memory(100).unwrap());
+        assert!(db.search_memories(100, "Rust", 10).unwrap().is_empty());
+        assert!(db.load_session(100).unwrap().is_some());
+        assert!(!db.get_recent_messages(100, 10).unwrap().is_empty());
+        assert_eq!(db.get_tasks_for_chat(100).unwrap().len(), 1);
+        assert_eq!(db.get_task_run_logs(task_id, 10).unwrap().len(), 1);
         assert!(db.get_chat_type(100).unwrap().is_some());
 
         cleanup(&dir);

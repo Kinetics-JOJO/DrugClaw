@@ -182,7 +182,28 @@ extract_asset_url() {
   local release_json="$1"
   local os="$2"
   local arch="$3"
-  local os_regex arch_regex
+  local os_regex arch_regex match
+  local urls
+  local preferred_triples=()
+
+  case "$os/$arch" in
+    darwin/x86_64)
+      preferred_triples=("x86_64-apple-darwin" "amd64-apple-darwin" "x86_64-darwin" "amd64-darwin")
+      ;;
+    darwin/aarch64)
+      preferred_triples=("aarch64-apple-darwin" "arm64-apple-darwin" "aarch64-darwin" "arm64-darwin")
+      ;;
+    linux/x86_64)
+      preferred_triples=("x86_64-linux-gnu" "amd64-linux-gnu" "x86_64-linux-musl" "amd64-linux-musl" "x86_64-linux" "amd64-linux")
+      ;;
+    linux/aarch64)
+      preferred_triples=("aarch64-linux-gnu" "arm64-linux-gnu" "aarch64-linux-musl" "arm64-linux-musl" "aarch64-linux" "arm64-linux")
+      ;;
+    *)
+      err "Unsupported OS/architecture for release matching: $os/$arch"
+      return 1
+      ;;
+  esac
 
   case "$os" in
     darwin) os_regex="apple-darwin|darwin" ;;
@@ -202,10 +223,31 @@ extract_asset_url() {
       ;;
   esac
 
-  printf '%s\n' "$release_json" \
+  urls="$(
+    printf '%s\n' "$release_json" \
+      | grep -Eo 'https://[^"]+' \
+      | grep '/releases/download/' \
+      | grep -E "/${BIN_NAME}-[^/]+\.(tar\.gz|zip)$" \
+      || true
+  )"
+
+  for triple in "${preferred_triples[@]}"; do
+    match="$(
+      printf '%s\n' "$urls" \
+        | grep -E "/${BIN_NAME}-[^/]+-${triple}\.(tar\.gz|zip)(\?.*)?$" \
+        | head -n1 \
+        || true
+    )"
+    if [ -n "$match" ]; then
+      printf '%s\n' "$match"
+      return 0
+    fi
+  done
+
+  # Compatibility fallback for older/non-standard naming.
+  printf '%s\n' "$urls" \
     | grep -Eo 'https://[^"]+' \
-    | grep '/releases/download/' \
-    | grep -E "/${BIN_NAME}-[0-9]+\.[0-9]+\.[0-9]+-.*(apple-darwin|linux-gnu|linux-musl|windows-msvc)\.(tar\.gz|zip)$" \
+    | grep -E "/${BIN_NAME}-[0-9]+\.[0-9]+\.[0-9]+-.*(apple-darwin|linux-gnu|linux-musl|windows-msvc|darwin|linux)\.(tar\.gz|zip)$" \
     | grep -Ei "(${arch_regex}).*(${os_regex})|(${os_regex}).*(${arch_regex})" \
     | head -n1
 }

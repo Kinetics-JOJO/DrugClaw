@@ -1,10 +1,37 @@
 param(
-  [string]$InstallDir = $(if ($env:MICROCLAW_INSTALL_DIR) { $env:MICROCLAW_INSTALL_DIR } else { Join-Path $env:USERPROFILE '.local\bin' }),
+  [string]$InstallDir,
   [switch]$CleanPath
 )
 
 $ErrorActionPreference = 'Stop'
 $BinName = 'drugclaw.exe'
+
+function Get-EnvAlias {
+  param(
+    [string]$Primary,
+    [string]$Legacy,
+    [string]$Fallback = ''
+  )
+
+  $primaryValue = (Get-Item -Path "Env:$Primary" -ErrorAction SilentlyContinue).Value
+  if ($primaryValue) {
+    return $primaryValue
+  }
+  $legacyValue = (Get-Item -Path "Env:$Legacy" -ErrorAction SilentlyContinue).Value
+  if ($legacyValue) {
+    return $legacyValue
+  }
+  return $Fallback
+}
+
+if (-not $PSBoundParameters.ContainsKey('InstallDir') -or [string]::IsNullOrWhiteSpace($InstallDir)) {
+  $installFallback = if ($env:USERPROFILE) {
+    Join-Path $env:USERPROFILE '.local\bin'
+  } else {
+    Join-Path (Get-Location) '.local\bin'
+  }
+  $InstallDir = Get-EnvAlias -Primary 'DRUGCLAW_INSTALL_DIR' -Legacy 'MICROCLAW_INSTALL_DIR' -Fallback $installFallback
+}
 
 function Write-Info([string]$msg) {
   Write-Host $msg

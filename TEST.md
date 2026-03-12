@@ -258,6 +258,16 @@ Since DrugClaw is a multi-platform bot with external dependencies (LLM APIs, Tel
 
 ---
 
+## 16A. ACP Stdio Mode
+
+| # | User Story | Steps | Expected |
+|---|-----------|-------|----------|
+| 16A.1 | ACP startup | Run `drugclaw acp` | DrugClaw starts as an ACP stdio server |
+| 16A.2 | ACP session continuity | Use one ACP client session for two turns | Second turn keeps prior context |
+| 16A.3 | ACP cancellation | Start a long-running ACP request, then send `/stop` | Active ACP run is cancelled cleanly |
+
+---
+
 ## 17. Browser Automation
 
 | # | User Story | Steps | Expected |

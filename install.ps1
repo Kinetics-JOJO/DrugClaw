@@ -60,9 +60,25 @@ function Resolve-Arch {
 }
 
 function Select-AssetUrl([object]$release, [string]$arch) {
+  $preferredTriples = switch ($arch) {
+    'x86_64' { @('x86_64-windows-msvc', 'amd64-windows-msvc') }
+    'aarch64' { @('aarch64-windows-msvc', 'arm64-windows-msvc') }
+    default { @() }
+  }
+
+  foreach ($triple in $preferredTriples) {
+    $escapedTriple = [regex]::Escape($triple)
+    $pattern = "drugclaw-[^/]+-$escapedTriple\.zip(\?.*)?$"
+    $match = $release.assets | Where-Object { $_.browser_download_url -match $pattern } | Select-Object -First 1
+    if ($null -ne $match) {
+      return $match.browser_download_url
+    }
+  }
+
   $patterns = @(
     "drugclaw-[0-9]+\.[0-9]+\.[0-9]+-$arch-windows-msvc\.zip$",
-    "drugclaw-[0-9]+\.[0-9]+\.[0-9]+-.*$arch.*windows.*\.zip$"
+    "drugclaw-[0-9]+\.[0-9]+\.[0-9]+-.*$arch.*windows.*\.zip$",
+    "drugclaw-[^/]+-.*$arch.*windows.*\.zip$"
   )
 
   foreach ($p in $patterns) {

@@ -34,7 +34,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           CI_WAIT_TIMEOUT_SECONDS: "900"
           CI_WAIT_INTERVAL_SECONDS: "30"
-          REQUIRED_CI_JOBS_JSON: '["Web Build","Rust (ubuntu-latest)","Rust (macos-latest)","Stability Smoke"]'
+          REQUIRED_CI_JOBS_JSON: '["Web Build","Rust (ubuntu-latest)","Rust (macos-latest)","Rust (macos-13)","Stability Smoke"]'
         shell: bash
         run: |
           TARGET_SHA="$(git rev-parse HEAD)"
@@ -135,6 +135,18 @@ jobs:
             target_triple: x86_64-unknown-linux-gnu
             asset_triple: x86_64-linux-gnu
             archive_ext: tar.gz
+          - label: macos-aarch64
+            os: macos-latest
+            bin: drugclaw
+            target_triple: aarch64-apple-darwin
+            asset_triple: aarch64-apple-darwin
+            archive_ext: tar.gz
+          - label: macos-x86_64
+            os: macos-13
+            bin: drugclaw
+            target_triple: x86_64-apple-darwin
+            asset_triple: x86_64-apple-darwin
+            archive_ext: tar.gz
           - label: windows-x86_64
             os: windows-latest
             bin: drugclaw.exe
@@ -162,9 +174,11 @@ jobs:
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target_triple }}
 
       - name: Build release binary
-        run: cargo build --release
+        run: cargo build --release --target ${{ matrix.target_triple }}
 
       - name: Package archive (Linux)
         if: matrix.archive_ext == 'tar.gz'
@@ -172,7 +186,7 @@ jobs:
         run: |
           RELEASE_VERSION="${RELEASE_TAG#v}"
           ASSET_NAME="drugclaw-${RELEASE_VERSION}-${{ matrix.asset_triple }}.tar.gz"
-          tar -czf "$ASSET_NAME" -C target/release "${{ matrix.bin }}"
+          tar -czf "$ASSET_NAME" -C "target/${{ matrix.target_triple }}/release" "${{ matrix.bin }}"
           echo "ASSET_NAME=$ASSET_NAME" >> "$GITHUB_ENV"
 
       - name: Package archive (Windows)
@@ -181,7 +195,7 @@ jobs:
         run: |
           $releaseVersion = $env:RELEASE_TAG -replace '^v', ''
           $assetName = "drugclaw-${releaseVersion}-${{ matrix.asset_triple }}.zip"
-          Compress-Archive -Path "target/release/${{ matrix.bin }}" -DestinationPath $assetName -Force
+          Compress-Archive -Path "target/${{ matrix.target_triple }}/release/${{ matrix.bin }}" -DestinationPath $assetName -Force
           "ASSET_NAME=$assetName" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
       - name: Upload build artifact

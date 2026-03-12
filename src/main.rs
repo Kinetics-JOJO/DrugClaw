@@ -42,6 +42,8 @@ struct Cli {
 enum MainCommand {
     /// Start runtime (enabled channels)
     Start,
+    /// Serve Agent Client Protocol (ACP) over stdio
+    Acp,
     /// Full-screen setup wizard (or `setup --enable-sandbox`)
     Setup(SetupCommand),
     /// Preflight diagnostics
@@ -479,8 +481,9 @@ async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
     apply_config_override(cli.config.as_ref())?;
 
-    match cli.command {
-        Some(MainCommand::Start) => {}
+    let launch_mode = match cli.command {
+        Some(MainCommand::Start) => Some("start"),
+        Some(MainCommand::Acp) => Some("acp"),
         Some(MainCommand::Gateway { args }) => {
             gateway::handle_gateway_cli(&args)?;
             return Ok(());
@@ -538,7 +541,7 @@ async fn main() -> anyhow::Result<()> {
             println!();
             return Ok(());
         }
-    }
+    };
 
     let config = match Config::load() {
         Ok(c) => c,
@@ -602,14 +605,29 @@ async fn main() -> anyhow::Result<()> {
     // Otherwise, changing data_dir to runtime/ would make tools default to runtime/skills.
     runtime_config.skills_dir = Some(skills_data_dir);
 
-    runtime::run(
-        runtime_config,
-        db,
-        memory_manager,
-        skill_manager,
-        mcp_manager,
-    )
-    .await?;
+    match launch_mode {
+        Some("start") => {
+            runtime::run(
+                runtime_config,
+                db,
+                memory_manager,
+                skill_manager,
+                mcp_manager,
+            )
+            .await?;
+        }
+        Some("acp") => {
+            drugclaw::acp::serve(
+                runtime_config,
+                db,
+                memory_manager,
+                skill_manager,
+                mcp_manager,
+            )
+            .await?;
+        }
+        _ => unreachable!("launch mode must be resolved before runtime init"),
+    }
 
     Ok(())
 }
@@ -774,5 +792,11 @@ mod tests {
     fn cli_parses_upgrade_command() {
         let cli = Cli::parse_from(["drugclaw", "upgrade"]);
         assert!(matches!(cli.command, Some(MainCommand::Upgrade)));
+    }
+
+    #[test]
+    fn cli_parses_acp_command() {
+        let cli = Cli::parse_from(["drugclaw", "acp"]);
+        assert!(matches!(cli.command, Some(MainCommand::Acp)));
     }
 }
