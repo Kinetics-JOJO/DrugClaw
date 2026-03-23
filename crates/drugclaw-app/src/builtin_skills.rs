@@ -376,6 +376,18 @@ stale-content
             "target-intelligence-tools",
             "variant-analysis-tools",
             "docking-tools",
+            "patent-landscape-tools",
+            "competitive-intelligence-tools",
+            "multi-objective-optimization-tools",
+            "knowledge-graph-tools",
+            "active-learning-tools",
+            "retrosynthesis-tools",
+            "molecular-generation-tools",
+            "pk-modeling-tools",
+            "pathway-enrichment-tools",
+            "network-pharmacology-tools",
+            "pharmacovigilance-tools",
+            "epigenomics-tools",
         ] {
             let skill_file = skills_root.join(skill).join("SKILL.md");
             assert!(skill_file.exists(), "missing built-in skill: {skill}");
